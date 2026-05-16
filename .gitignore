@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Database
+theosign.db
+
+# Uploaded images
+public/uploads/*
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.local
