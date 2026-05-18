@@ -1,0 +1,9 @@
+[build]
+  publish = "public"
+  # No build command needed for this static site; Netlify will serve files from `public`.
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  force = true

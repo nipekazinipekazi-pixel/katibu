@@ -1,0 +1,1 @@
+﻿path = r'C:\Users\chrispin\OneDrive\Desktop\THEO PHILLIP\public\app.js' + chr(10) + 'js = open(path, encoding=' + chr(39) + 'utf-8' + chr(39) + ').read()' + chr(10) + 'print(js)'

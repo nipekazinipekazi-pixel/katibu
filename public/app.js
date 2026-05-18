@@ -15,7 +15,7 @@ const STATE = {
 
 const API_BASE = '/api';
 
-// === UTILITY ===
+// === UTILITIES ===
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
 
@@ -84,7 +84,6 @@ async function api(path, options = {}) {
   });
 
   if (res.status === 401 || res.status === 403) {
-    // Session expired or revoked
     if (STATE.currentView !== 'landing') {
       showToast('Session expired. Please log in again.', 'error');
       STATE.accessCode = null;
@@ -112,6 +111,9 @@ function renderApp(view) {
       break;
     case 'dashboard':
       renderDashboard(app);
+      break;
+    case 'editor':
+      renderEditor(app);
       break;
     case 'admin':
       renderAdminDashboard(app);
@@ -190,6 +192,45 @@ function renderLanding(container) {
   input.focus();
 }
 
+// === CODE EDITOR VIEW ===
+function renderEditor(container) {
+  container.innerHTML = `
+    <div class="editor-page">
+      <header class="dash-header">
+        <div class="dash-header-left">
+          <div class="dash-logo">TS</div>
+          <span class="dash-title">Code Editor</span>
+        </div>
+        <div class="dash-header-right">
+          <button class="btn-logout" id="editorBackBtn">Back</button>
+        </div>
+      </header>
+
+      <div class="code-area">
+        <textarea id="codeEditor" placeholder="Write your code here..."></textarea>
+      </div>
+
+      <div class="editor-actions">
+        <button class="btn-secondary" id="editorRunBtn">Run</button>
+        <button class="btn-primary" id="editorSaveBtn">Save</button>
+      </div>
+    </div>
+  `;
+
+  $('#editorBackBtn').addEventListener('click', () => navigateTo('landing'));
+  $('#editorSaveBtn').addEventListener('click', () => {
+    const code = $('#codeEditor').value;
+    if (!code.trim()) { showToast('Nothing to save.', 'error'); return; }
+    // For now, just show saved toast (persisting can be added later)
+    showToast('Code saved locally (not persisted).', 'success');
+  });
+  $('#editorRunBtn').addEventListener('click', () => {
+    const code = $('#codeEditor').value;
+    if (!code.trim()) { showToast('No code to run.', 'error'); return; }
+    showToast('Execution simulated — no runtime available in browser.', 'info');
+  });
+}
+
 // === USER DASHBOARD ===
 function renderDashboard(container) {
   container.innerHTML = `
@@ -207,7 +248,6 @@ function renderDashboard(container) {
       </header>
 
       <div class="dash-body">
-        <!-- Upload Section -->
         <div class="upload-section">
           <h2>Chart Analysis</h2>
           <p>Upload a MetaTrader 4 screenshot for AI-powered market analysis</p>
@@ -224,10 +264,8 @@ function renderDashboard(container) {
           </div>
         </div>
 
-        <!-- Analysis Result -->
         <div class="analysis-result" id="analysisResult"></div>
 
-        <!-- History -->
         <div class="history-section">
           <h2>Analysis History</h2>
           <div id="historyContainer"></div>
@@ -236,10 +274,8 @@ function renderDashboard(container) {
     </div>
   `;
 
-  // Load history
   loadUserHistory();
 
-  // Upload area logic
   const uploadArea = $('#uploadArea');
   const fileInput = $('#fileInput');
   const uploadPreview = $('#uploadPreview');
@@ -316,14 +352,12 @@ function renderDashboard(container) {
     uploadActions.style.display = 'none';
   }
 
-  // Logout
   $('#logoutBtn').addEventListener('click', () => {
     STATE.accessCode = null;
     STATE.isAdmin = false;
     navigateTo('landing');
   });
 
-  // Refresh
   $('#refreshBtn').addEventListener('click', loadUserHistory);
 }
 
@@ -395,10 +429,6 @@ function renderHistory() {
               <div class="stat-value" style="font-size:1rem;font-weight:600;color:var(--green)">${a.take_profit || '—'}</div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">5-min Movement Prob.</div>
-              <div class="stat-value">${a.next_5min_movement_probability || '—'}%</div>
-            </div>
-            <div class="stat-card">
               <div class="stat-label">Analyzed</div>
               <div class="stat-value" style="font-size:0.85rem;font-weight:400">${formatDateFull(a.analyzed_at)}</div>
             </div>
@@ -412,7 +442,6 @@ function renderHistory() {
     `;
   }).join('');
 
-  // Add click-to-expand
   container.querySelectorAll('.history-item').forEach((item) => {
     item.addEventListener('click', () => {
       const detail = item.querySelector('.history-expanded');
@@ -441,7 +470,6 @@ async function analyzeChart(file) {
     renderAnalysisResult(data.analysis);
     showToast('Analysis complete!', 'success');
 
-    // Reset upload
     const uploadArea = $('#uploadArea');
     const uploadPreview = $('#uploadPreview');
     const uploadActions = $('#uploadActions');
@@ -453,7 +481,6 @@ async function analyzeChart(file) {
     $('#fileInput').value = '';
     STATE.selectedFile = null;
 
-    // Refresh history
     loadUserHistory();
   } catch (err) {
     showToast(err.message || 'Analysis failed. Please try again.', 'error');
@@ -470,15 +497,10 @@ function renderAnalysisResult(a) {
   const dir = a.market_direction || 'unknown';
   const action = a.suggested_action || 'wait';
   const conf = a.confidence_percentage || 0;
-  const prob = a.next_5min_movement_probability || 0;
 
   let confClass = 'medium';
   if (conf >= 80) confClass = 'high';
   else if (conf <= 70) confClass = 'low';
-
-  let probClass = 'medium';
-  if (prob >= 75) probClass = 'high';
-  else if (prob <= 60) probClass = 'low';
 
   let dirArrow = '→';
   if (dir === 'bullish') dirArrow = '↑';
@@ -522,16 +544,6 @@ function renderAnalysisResult(a) {
         <div class="stat-label">Take Profit</div>
         <div class="stat-value" style="color:var(--green)">${a.take_profit || '—'}</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Next 5-min Movement Probability</div>
-        <div class="stat-value">
-          <span class="probability-badge ${probClass}">${prob}%</span>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Analysis Time</div>
-        <div class="stat-value" style="font-size:0.9rem;font-weight:400">${formatDateFull(a.analyzed_at)}</div>
-      </div>
     </div>
     <div class="reasoning-box">
       <div class="stat-label">AI Reasoning</div>
@@ -542,11 +554,11 @@ function renderAnalysisResult(a) {
   el.classList.add('show');
 }
 
-// === ADMIN DASHBOARD (Secret) ===
+// === ADMIN DASHBOARD ===
 function renderAdminDashboard(container) {
   container.innerHTML = `
     <div class="admin-dash">
-      <header class="dash-header" style="border-color: rgba(99,102,241,0.3)">
+      <header class="dash-header" style="border-color: rgba(0,208,132,0.3)">
         <div class="dash-header-left">
           <div class="dash-logo">TS</div>
           <span class="dash-title">Admin</span>
@@ -559,17 +571,14 @@ function renderAdminDashboard(container) {
       </header>
 
       <div class="admin-body">
-        <!-- Stats -->
         <div class="admin-stats" id="adminStats"></div>
 
-        <!-- Tabs -->
         <div class="tabs">
           <button class="tab active" data-tab="codes">Access Codes</button>
           <button class="tab" data-tab="users">Active Users</button>
           <button class="tab" data-tab="uploads">Upload History</button>
         </div>
 
-        <!-- Content -->
         <div id="adminContent"></div>
       </div>
     </div>
@@ -577,7 +586,6 @@ function renderAdminDashboard(container) {
 
   loadAdminData();
 
-  // Tab switching
   container.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       container.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
@@ -586,14 +594,12 @@ function renderAdminDashboard(container) {
     });
   });
 
-  // Logout
   $('#adminLogoutBtn').addEventListener('click', () => {
     STATE.accessCode = null;
     STATE.isAdmin = false;
     navigateTo('landing');
   });
 
-  // Refresh
   $('#adminRefreshBtn').addEventListener('click', loadAdminData);
 }
 
@@ -659,9 +665,6 @@ function renderAdminTabContent(tab) {
     case 'codes':
       renderAdminCodes(container);
       break;
-    case 'users':
-      renderAdminUsers(container);
-      break;
     case 'uploads':
       renderAdminUploads(container);
       break;
@@ -673,18 +676,13 @@ function renderAdminTabContent(tab) {
 function renderAdminCodes(container) {
   container.innerHTML = `
     <div class="admin-section">
-      <h2>
-        Access Codes
-        <span style="font-size:0.8rem;color:var(--text-muted);font-weight:400">${STATE.adminCodes.length} total</span>
-      </h2>
-
+      <h2>Access Codes <span style="font-size:0.8rem;color:var(--text-muted);font-weight:400">${STATE.adminCodes.length} total</span></h2>
       <div class="create-code-form">
         <input type="text" id="newCodeInput" placeholder="Code (e.g. TRADE-9999)" />
         <input type="number" id="newCodeLimit" placeholder="Usage limit (-1 for unlimited)" value="-1" style="min-width:100px;max-width:140px" />
         <input type="date" id="newCodeExpiry" placeholder="Expiry date (optional)" style="min-width:130px;max-width:160px" />
         <button class="btn-sm" id="createCodeBtn">Create Code</button>
       </div>
-
       <div style="overflow-x:auto">
         <table class="admin-table">
           <thead>
@@ -708,7 +706,6 @@ function renderAdminCodes(container) {
   tbody.innerHTML = STATE.adminCodes.map((c) => {
     const isActive = !c.disabled;
     const isExpired = c.expires_at && new Date(c.expires_at) < new Date();
-
     let statusText = 'Active';
     let statusClass = 'active-status';
     if (c.disabled) { statusText = 'Disabled'; statusClass = 'disabled-status'; }
@@ -734,7 +731,6 @@ function renderAdminCodes(container) {
     `;
   }).join('');
 
-  // Create code
   $('#createCodeBtn').addEventListener('click', async () => {
     const code = $('#newCodeInput').value.trim();
     if (!code) { showToast('Please enter a code.', 'error'); return; }
@@ -756,7 +752,6 @@ function renderAdminCodes(container) {
     }
   });
 
-  // Toggle / Delete actions
   tbody.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();

@@ -158,7 +158,8 @@ app.post('/api/upload', validateAccessCode, upload.single('chart'), async (req, 
   if (!req.file) return res.status(400).json({ error: 'No chart image uploaded.' });
   try {
     const uploadId = uuidv4();
-    const analysis = await generateAIAnalysis();
+    const lang = req.body.lang || req.query.lang || 'en';
+    const analysis = await generateAIAnalysis(lang);
     queryRun('INSERT INTO uploads (id, access_code, filename, original_name, analysis_result) VALUES (?, ?, ?, ?, ?)',
       [uploadId, req.accessCode, req.file.filename, req.file.originalname, JSON.stringify(analysis)]);
     res.json({ id: uploadId, filename: req.file.filename, original_name: req.file.originalname, analysis });
@@ -249,15 +250,15 @@ app.get('/api/admin/analytics', validateAccessCode, (req, res) => {
 });
 
 // === AI Analysis Generator (DeepSeek AI) ===
-function callDeepSeek(prompt) {
+function callDeepSeek(prompt, systemPrompt) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
       model: DEEPSEEK_MODEL,
       messages: [
-        { role: 'system', content: 'You are an expert Forex and financial market analyst. Analyze the chart and provide trading insights in JSON format only. No markdown, no explanation, just valid JSON.' },
+        { role: 'system', content: systemPrompt || 'You are an expert Forex and financial market analyst.' },
         { role: 'user', content: prompt }
       ],
-      max_tokens: 500,
+      max_tokens: 600,
       temperature: 0.3,
     });
 
@@ -290,55 +291,119 @@ function callDeepSeek(prompt) {
   });
 }
 
-async function generateAIAnalysis() {
-  try {
-    const prompt = `Analyze this Forex chart for a trading opportunity. Provide a JSON response with EXACTLY these fields:
+async function generateAIAnalysis(lang = 'en') {
+  const isSwahili = lang === 'sw';
+  
+  const systemPrompt = isSwahili
+    ? 'Wewe ni mchambuzi mtaalamu wa Forex na masoko ya fedha. Toa ishara za biashara kwa muundo unaosomeka. Rudisha JSON pekee, hakuna alama za ziada.'
+    : 'You are an expert Forex and financial market analyst. Provide trading signals in a clear format. Return only valid JSON, no markdown.';
+  
+  const userPrompt = isSwahili
+    ? `Chambua chati hii ya Forex. Toa JSON ifuatayo:
 {
-  "market_direction": "bullish" or "bearish" or "sideways",
-  "confidence_percentage": number between 50-99,
-  "suggested_action": "buy" or "sell" or "wait",
-  "entry_zone": "a price range like 1.1050 - 1.1070",
-  "stop_loss": "a price level like 1.1020",
-  "take_profit": "a price level like 1.1120",
-  "next_5min_movement_probability": number between 50-95,
-  "reasoning": "detailed technical analysis explaining your decision"
+  "pair": "JOZI ya sarafu kama EUR/USD",
+  "direction": "CALL" au "PUT" au "HOLD",
+  "confidence": asilimia 50-99,
+  "entry_price": "bei ya kuingia",
+  "timeframe": "M1, M5, M15",
+  "expiry": "dakika 5",
+  "signal_time": "saa ya sasa kwa UTC-3 kama 13:05",
+  "timezone": "UTC -3",
+  "gales": {
+    "1st": "dakika 5",
+    "2nd": "dakika 10",
+    "3rd": "dakika 15"
+  },
+  "reasoning": "Maelezo ya uchambuzi wa kiufundi kwa Kiswahili"
+}`
+
+    : `Analyze this Forex chart and provide a trading signal. Return EXACTLY this JSON format:
+{
+  "pair": "currency pair like EUR/USD or USDINR-OTC",
+  "direction": "CALL" or "PUT" or "HOLD",
+  "confidence": number 50-99,
+  "entry_price": "entry price level",
+  "timeframe": "M1, M5, or M15",
+  "expiry": "5 min",
+  "signal_time": "current time in UTC-3 like 13:05",
+  "timezone": "UTC -3",
+  "gales": {
+    "1st": "+5 min time like 13:10",
+    "2nd": "+10 min time like 13:15",
+    "3rd": "+15 min time like 13:20"
+  },
+  "reasoning": "detailed technical analysis in English"
 }
 
-Base your analysis on common Forex technical indicators: support/resistance levels, moving averages (50 EMA, 200 EMA), RSI, MACD, candlestick patterns, and market structure. Provide realistic forex price levels.`;
-
-    const responseText = await callDeepSeek(prompt);
+Base analysis on: support/resistance, candlestick patterns, RSI, MACD, and price action. Be realistic.`;
+  
+  try {
+    const responseText = await callDeepSeek(userPrompt, systemPrompt);
     
-    // Try to extract JSON from response
     let jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON found in response');
+    if (!jsonMatch) throw new Error('No JSON found');
     
     const analysis = JSON.parse(jsonMatch[0]);
+    const now = new Date();
     
-    // Validate and fill defaults
+    // Calculate gale times in UTC-3
+    const utcMinus3 = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    const h = utcMinus3.getHours().toString().padStart(2, '0');
+    const m = utcMinus3.getMinutes().toString().padStart(2, '0');
+    const currentTime = `${h}:${m}`;
+    
+    const addMin = (min) => {
+      const d = new Date(utcMinus3.getTime() + min * 60 * 1000);
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    };
+    
+    const direction = typeof analysis.direction === 'string' ? analysis.direction.toUpperCase() : 'HOLD';
+    const directionEmoji = direction === 'CALL' ? '🟢' : direction === 'PUT' ? '🔴' : '🟡';
+    
     return {
-      market_direction: ['bullish', 'bearish', 'sideways'].includes(analysis.market_direction) ? analysis.market_direction : 'sideways',
-      confidence_percentage: Math.min(99, Math.max(50, analysis.confidence_percentage || 75)),
-      suggested_action: ['buy', 'sell', 'wait'].includes(analysis.suggested_action) ? analysis.suggested_action : 'wait',
-      entry_zone: analysis.entry_zone || '1.1000 - 1.1020',
-      stop_loss: analysis.stop_loss || '1.0950',
-      take_profit: analysis.take_profit || '1.1100',
-      next_5min_movement_probability: Math.min(95, Math.max(50, typeof analysis.next_5min_movement_probability === 'object' ? (analysis.next_5min_movement_probability.up || 65) : (analysis.next_5min_movement_probability || 65))),
-      reasoning: analysis.reasoning || 'Analysis completed successfully.',
-      analyzed_at: new Date().toISOString()
+      signal_time: analysis.signal_time || currentTime,
+      timezone: 'UTC -3',
+      pair: analysis.pair || 'USDINR-OTC',
+      expiry: '5 min',
+      direction: direction,
+      direction_emoji: directionEmoji,
+      confidence: Math.min(99, Math.max(50, parseInt(analysis.confidence) || 75)),
+      entry_price: analysis.entry_price || '—',
+      timeframe: analysis.timeframe || 'M5',
+      gales: {
+        first: analysis.gales?.['1st'] || addMin(5),
+        second: analysis.gales?.['2nd'] || addMin(10),
+        third: analysis.gales?.['3rd'] || addMin(15),
+      },
+      next_signal: addMin(5),
+      reasoning: analysis.reasoning || (isSwahili ? 'Hakuna uchambuzi uliopatikana.' : 'No analysis available.'),
+      analyzed_at: now.toISOString(),
+      lang: lang
     };
   } catch (err) {
     console.error('DeepSeek analysis error:', err.message);
-    // Fallback analysis if API fails
+    const now = new Date();
+    const utcMinus3 = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    const addMin = (min) => {
+      const d = new Date(utcMinus3.getTime() + min * 60 * 1000);
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    };
+    
     return {
-      market_direction: 'sideways',
-      confidence_percentage: 50,
-      suggested_action: 'wait',
-      entry_zone: '1.1000 - 1.1020',
-      stop_loss: '1.0950',
-      take_profit: '1.1100',
-      next_5min_movement_probability: 55,
-      reasoning: 'Analysis service temporarily unavailable. Showing default neutral analysis.',
-      analyzed_at: new Date().toISOString()
+      signal_time: `${utcMinus3.getHours().toString().padStart(2,'0')}:${utcMinus3.getMinutes().toString().padStart(2,'0')}`,
+      timezone: 'UTC -3',
+      pair: 'USDINR-OTC',
+      expiry: '5 min',
+      direction: 'HOLD',
+      direction_emoji: '🟡',
+      confidence: 50,
+      entry_price: '—',
+      timeframe: 'M5',
+      gales: { first: addMin(5), second: addMin(10), third: addMin(15) },
+      next_signal: addMin(5),
+      reasoning: isSwahili ? 'Huduma ya uchambuzi haipatikani kwa sasa. Tafadhali jaribu tena.' : 'Analysis service temporarily unavailable. Please try again.',
+      analyzed_at: now.toISOString(),
+      lang: lang
     };
   }
 }

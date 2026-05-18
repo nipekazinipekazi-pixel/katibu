@@ -1,3 +1,10 @@
+node_modules/
+theosign.db
+/public/uploads/
+.env
+.DS_Store
+npm-debug.log
+yarn-error.log
 # Dependencies
 node_modules/
 

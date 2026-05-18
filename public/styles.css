@@ -91,6 +91,7 @@ body {
   text-align: center;
 }
 
+
 .logo {
   display: flex;
   align-items: center;
@@ -181,7 +182,7 @@ body {
   background: linear-gradient(135deg, var(--accent), #5457e0);
   border: none;
   border-radius: var(--radius-sm);
-  color: white;
+  color: #0a1a2e;
   font-size: 0.95rem;
   font-weight: 600;
   font-family: 'Inter', sans-serif;
