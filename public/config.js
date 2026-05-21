@@ -30,10 +30,11 @@
   const isGitHubPages = hostname.includes('github.io') || hostname.endsWith('.github.io');
 
   if (isNetlify || isGitHubPages) {
-    // ⚠️ IMPORTANT: Replace this URL with your actual Vercel backend deployment URL
-    // After deploying to Vercel, update this to your Vercel project URL
-    apiBase = 'https://theo-sign-h7wb.vercel.app/api';
-    console.log('[Theo Sign] Detected static hosting. Using remote API:', apiBase);
+    // When hosted on Netlify (or GitHub Pages), the `_redirects` file proxies
+    // /api/* requests to the Vercel backend server-side, so we use a relative
+    // path. This avoids CORS errors entirely — the browser talks to its own origin.
+    apiBase = '/api';
+    console.log('[Theo Sign] Detected static hosting. Using proxied API:', apiBase);
   }
 
   // Make it globally available
