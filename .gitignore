@@ -27,3 +27,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Separate deploy variant (not part of main build)
+theo-sign-deploy/
