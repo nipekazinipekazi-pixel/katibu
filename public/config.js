@@ -32,7 +32,7 @@
   if (isNetlify || isGitHubPages) {
     // ⚠️ IMPORTANT: Replace this URL with your actual Vercel backend deployment URL
     // After deploying to Vercel, update this to your Vercel project URL
-    apiBase = 'https://theo-sign.vercel.app/api';
+    apiBase = 'https://theo-sign-h7wb.vercel.app/api';
     console.log('[Theo Sign] Detected static hosting. Using remote API:', apiBase);
   }
 
