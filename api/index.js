@@ -1,6 +1,7 @@
 // === Theo Sign - Vercel Serverless Entry Point (Supabase Edition) ===
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -17,6 +18,16 @@ const IS_VERCEL = process.env.VERCEL === '1';
 const DATA_DIR = IS_VERCEL ? '/tmp' : path.join(__dirname, '..');
 
 // --- Setup ---
+app.use(cors({
+  origin: [
+    'https://theo-theo.netlify.app',
+    'http://localhost:8080',
+    'http://localhost:3000',
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json({ limit: '10mb' }));
 
 // --- Multer for temporary file upload (before sending to Supabase Storage) ---
