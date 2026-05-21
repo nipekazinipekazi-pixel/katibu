@@ -1,0 +1,39 @@
+# === Theo Sign - Deploy Frontend to Netlify ===
+# This workflow deploys the static frontend (public/ folder) to Netlify.
+# The backend API continues to run on Vercel (or another Node host).
+#
+# Setup (one-time):
+#   1. Push your repo to GitHub
+#   2. Go to https://app.netlify.com and click "Add new site" → "Import an existing project"
+#   3. Connect your GitHub repo
+#   4. Netlify will auto-detect the settings from netlify.toml (publish dir: public)
+#   5. OR use this GitHub Actions workflow with your NETLIFY_AUTH_TOKEN and NETLIFY_SITE_ID
+#
+# Required secrets (for GitHub Actions deploy):
+#   NETLIFY_AUTH_TOKEN - Get from https://app.netlify.com/user/applications#personal-access-tokens
+#   NETLIFY_SITE_ID    - Get from Netlify site settings → Site information → API ID
+
+name: Deploy Frontend to Netlify
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Netlify
+        uses: nwtgck/actions-netlify@v2.1
+        with:
+          publish-dir: './public'
+          production-branch: main
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deploy-message: "Deploy from GitHub Actions"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        timeout-minutes: 5

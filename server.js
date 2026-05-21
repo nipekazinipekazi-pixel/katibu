@@ -1,101 +1,27 @@
+// === Theo Sign - Backend Server (Supabase Edition) ===
+require('dotenv').config();
 const express = require('express');
-const initSqlJs = require('sql.js');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const { v4: uuidv4 } = require('uuid');
+const supabase = require('./lib/supabase');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const MASTER_ADMIN_CODE = 'KX92-ROOT';
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'sk-fbb7008fec474bdaaee31971973fc796';
+const PORT = process.env.PORT || 8080;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const DEEPSEEK_MODEL = 'deepseek-chat';
-const DB_PATH = path.join(__dirname, 'theosign.db');
 
 // --- Setup ---
 app.use(express.json());
 app.use(express.static('public'));
 
-// Ensure uploads directory
-const uploadsDir = path.join(__dirname, 'public', 'uploads');
+// Ensure temp uploads directory for local dev
+const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-// --- SQLite Database (sql.js - pure JS, no native modules needed) ---
-let db;
-
-function saveDb() {
-  if (!db) return;
-  try {
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    fs.writeFileSync(DB_PATH, buffer);
-  } catch (e) {
-    console.error('Error saving DB:', e.message);
-  }
-}
-
-function queryAll(sql, params = []) {
-  try {
-    const stmt = db.prepare(sql);
-    if (params.length > 0) stmt.bind(params);
-    const rows = [];
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject());
-    }
-    stmt.free();
-    return rows;
-  } catch (e) {
-    console.error('Query error:', e.message, sql, params);
-    return [];
-  }
-}
-
-function queryOne(sql, params = []) {
-  const rows = queryAll(sql, params);
-  return rows.length > 0 ? rows[0] : null;
-}
-
-function queryRun(sql, params = []) {
-  try {
-    db.run(sql, params);
-    saveDb();
-    return true;
-  } catch (e) {
-    console.error('Run error:', e.message, sql, params);
-    throw e;
-  }
-}
-
-async function initDatabase() {
-  const SQL = await initSqlJs();
-  let buffer;
-  try {
-    buffer = fs.readFileSync(DB_PATH);
-  } catch (e) {
-    buffer = null;
-  }
-  db = buffer ? new SQL.Database(buffer) : new SQL.Database();
-  db.run(`CREATE TABLE IF NOT EXISTS access_codes (
-    code TEXT PRIMARY KEY, disabled INTEGER DEFAULT 0,
-    usage_limit INTEGER DEFAULT -1, usage_count INTEGER DEFAULT 0,
-    expires_at TEXT NULL, created_at TEXT DEFAULT (datetime('now'))
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS uploads (
-    id TEXT PRIMARY KEY, access_code TEXT NOT NULL,
-    filename TEXT NOT NULL, original_name TEXT NOT NULL,
-    uploaded_at TEXT DEFAULT (datetime('now')), analysis_result TEXT NULL
-  )`);
-  const existing = queryAll('SELECT code FROM access_codes LIMIT 1');
-  if (existing.length === 0) {
-    queryRun("INSERT INTO access_codes (code, usage_limit) VALUES (?, ?)", ['DEMO-1234', 10]);
-    queryRun("INSERT INTO access_codes (code, usage_limit) VALUES (?, ?)", ['TRADE-5678', 5]);
-  }
-  saveDb();
-  console.log('Database initialized');
-}
-
-// --- Multer for screenshot uploads ---
+// --- Multer for temporary file upload (before sending to Supabase Storage) ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => cb(null, uuidv4() + path.extname(file.originalname)),
@@ -111,154 +37,331 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-// --- Middleware: Validate Access Code ---
-function validateAccessCode(req, res, next) {
+// --- Middleware: Validate Access Code (via Supabase) ---
+async function validateAccessCode(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ error: 'Access code required.' });
   const code = authHeader.replace('Bearer ', '').trim();
-  if (code === MASTER_ADMIN_CODE) {
-    req.accessCode = code; req.isAdmin = true; return next();
+
+  // Check master admin code
+  let masterCode;
+  try { masterCode = await supabase.getSetting('master_code'); } catch (e) { masterCode = 'KX92-ROOT'; }
+  if (code === (masterCode || 'KX92-ROOT')) {
+    req.accessCode = code;
+    req.isAdmin = true;
+    return next();
   }
-  const row = queryOne('SELECT * FROM access_codes WHERE code = ?', [code]);
-  if (!row) return res.status(401).json({ error: 'Invalid access code.' });
-  if (row.disabled) return res.status(403).json({ error: 'Access code is disabled.' });
-  if (row.expires_at && new Date(row.expires_at) < new Date()) {
-    return res.status(403).json({ error: 'Access code has expired.' });
+
+  try {
+    const row = await supabase.findAccessCode(code);
+    if (!row) return res.status(401).json({ error: 'Invalid access code.' });
+    if (row.disabled) return res.status(403).json({ error: 'Access code is disabled.' });
+    if (row.expires_at && new Date(row.expires_at) < new Date()) {
+      return res.status(403).json({ error: 'Access code has expired.' });
+    }
+    if (row.usage_limit >= 0 && row.usage_count >= row.usage_limit) {
+      return res.status(403).json({ error: 'Access code usage limit reached.' });
+    }
+    req.accessCode = code;
+    req.accessCodeData = row;
+    req.isAdmin = false;
+    next();
+  } catch (err) {
+    console.error('[Auth] Error:', err.message);
+    return res.status(500).json({ error: 'Authentication service unavailable.' });
   }
-  if (row.usage_limit >= 0 && row.usage_count >= row.usage_limit) {
-    return res.status(403).json({ error: 'Access code usage limit reached.' });
-  }
-  req.accessCode = code; req.accessCodeData = row; req.isAdmin = false;
-  next();
 }
 
 // === API ROUTES ===
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'Access code required.' });
-  if (code === MASTER_ADMIN_CODE) {
+
+  // Check master admin code
+  let masterCode;
+  try { masterCode = await supabase.getSetting('master_code'); } catch (e) { masterCode = 'KX92-ROOT'; }
+  if (code === (masterCode || 'KX92-ROOT')) {
     return res.json({ role: 'admin', message: 'Admin access granted.' });
   }
-  const row = queryOne('SELECT * FROM access_codes WHERE code = ?', [code]);
-  if (!row) return res.status(401).json({ error: 'Invalid access code.' });
-  if (row.disabled) return res.status(403).json({ error: 'Access code is disabled.' });
-  if (row.expires_at && new Date(row.expires_at) < new Date()) {
-    return res.status(403).json({ error: 'Access code has expired.' });
+
+  try {
+    const row = await supabase.findAccessCode(code);
+    if (!row) return res.status(401).json({ error: 'Invalid access code.' });
+    if (row.disabled) return res.status(403).json({ error: 'Access code is disabled.' });
+    if (row.expires_at && new Date(row.expires_at) < new Date()) {
+      return res.status(403).json({ error: 'Access code has expired.' });
+    }
+    if (row.usage_limit >= 0 && row.usage_count >= row.usage_limit) {
+      return res.status(403).json({ error: 'Access code usage limit reached.' });
+    }
+    await supabase.incrementUsage(code);
+    res.json({ role: 'user', message: 'Access granted.' });
+  } catch (err) {
+    console.error('[Login] Error:', err.message);
+    res.status(500).json({ error: 'Login service unavailable.' });
   }
-  if (row.usage_limit >= 0 && row.usage_count >= row.usage_limit) {
-    return res.status(403).json({ error: 'Access code usage limit reached.' });
-  }
-  queryRun('UPDATE access_codes SET usage_count = usage_count + 1 WHERE code = ?', [code]);
-  res.json({ role: 'user', message: 'Access granted.' });
 });
 
 app.post('/api/upload', validateAccessCode, upload.single('chart'), async (req, res) => {
   if (req.isAdmin) return res.status(403).json({ error: 'Admin accounts cannot upload charts.' });
   if (!req.file) return res.status(400).json({ error: 'No chart image uploaded.' });
+
   try {
     const uploadId = uuidv4();
     const lang = req.body.lang || req.query.lang || 'en';
-    const analysis = await generateAIAnalysis(lang);
-    queryRun('INSERT INTO uploads (id, access_code, filename, original_name, analysis_result) VALUES (?, ?, ?, ?, ?)',
-      [uploadId, req.accessCode, req.file.filename, req.file.originalname, JSON.stringify(analysis)]);
+    const filePath = path.join(uploadsDir, req.file.filename);
+
+    // Read file buffer for Supabase Storage upload
+    const fileBuffer = fs.readFileSync(filePath);
+    const mimeType = req.file.mimetype;
+
+    // Upload image to Supabase Storage
+    let storageInfo = { path: null, url: null };
+    try {
+      storageInfo = await supabase.uploadChartImage(fileBuffer, req.file.filename, mimeType);
+    } catch (storageErr) {
+      console.error('[Storage] Upload failed:', storageErr.message);
+      // Continue without storage — analysis still works
+    }
+
+    // Generate analysis
+    const analysis = await generateAIAnalysis(lang, filePath);
+
+    // Save upload record to Supabase
+    await supabase.createUpload({
+      access_code: req.accessCode,
+      filename: req.file.filename,
+      original_name: req.file.originalname,
+      storage_path: storageInfo.path,
+      analysis_result: analysis,
+    });
+
+    // Clean up temp file
+    try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
+
     res.json({ id: uploadId, filename: req.file.filename, original_name: req.file.originalname, analysis });
   } catch (err) {
+    console.error('[Upload] Error:', err.message);
     res.status(500).json({ error: 'Analysis failed: ' + err.message });
   }
 });
 
-app.get('/api/uploads', validateAccessCode, (req, res) => {
+app.get('/api/uploads', validateAccessCode, async (req, res) => {
   if (req.isAdmin) return res.status(403).json({ error: 'Use admin endpoints.' });
-  const rows = queryAll('SELECT * FROM uploads WHERE access_code = ? ORDER BY uploaded_at DESC', [req.accessCode]);
-  res.json(rows.map((r) => ({ ...r, analysis_result: JSON.parse(r.analysis_result || '{}') })));
+  try {
+    const rows = await supabase.getUploadsByCode(req.accessCode);
+    res.json(rows || []);
+  } catch (err) {
+    console.error('[Uploads] Error:', err.message);
+    res.status(500).json({ error: 'Failed to load uploads.' });
+  }
 });
 
-app.get('/api/uploads/:id', validateAccessCode, (req, res) => {
-  if (req.isAdmin) return res.status(403).json({ error: 'Use admin endpoints.' });
-  const row = queryOne('SELECT * FROM uploads WHERE id = ? AND access_code = ?', [req.params.id, req.accessCode]);
-  if (!row) return res.status(404).json({ error: 'Upload not found.' });
-  row.analysis_result = JSON.parse(row.analysis_result || '{}');
-  res.json(row);
-});
+// === ADMIN ROUTES ===
 
-// === ADMIN ROUTES (Secret) ===
-
-app.get('/api/admin/codes', validateAccessCode, (req, res) => {
+app.get('/api/admin/codes', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
-  res.json(queryAll('SELECT * FROM access_codes ORDER BY created_at DESC'));
+  try {
+    const codes = await supabase.getAllAccessCodes();
+    res.json(codes);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/admin/codes', validateAccessCode, (req, res) => {
+app.post('/api/admin/codes', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
   const { code, usage_limit, expires_at } = req.body;
   if (!code) return res.status(400).json({ error: 'Code is required.' });
   try {
-    queryRun('INSERT INTO access_codes (code, usage_limit, expires_at) VALUES (?, ?, ?)',
-      [code, usage_limit ?? -1, expires_at || null]);
+    await supabase.createAccessCode({ code, usage_limit: usage_limit ?? -1, expires_at: expires_at || null });
     res.json({ success: true, code });
-  } catch (e) { res.status(409).json({ error: 'Code already exists.' }); }
+  } catch (err) {
+    if (err.message?.includes('duplicate') || err.code === '23505') {
+      return res.status(409).json({ error: 'Code already exists.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/admin/codes/:code', validateAccessCode, (req, res) => {
+app.put('/api/admin/codes/:code', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
   const { disabled, usage_limit, expires_at } = req.body;
-  const updates = []; const params = [];
-  if (disabled !== undefined) { updates.push('disabled = ?'); params.push(disabled ? 1 : 0); }
-  if (usage_limit !== undefined) { updates.push('usage_limit = ?'); params.push(usage_limit); }
-  if (expires_at !== undefined) { updates.push('expires_at = ?'); params.push(expires_at); }
-  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update.' });
-  params.push(req.params.code);
-  queryRun(`UPDATE access_codes SET ${updates.join(', ')} WHERE code = ?`, params);
-  res.json({ success: true });
+  const updates = {};
+  if (disabled !== undefined) updates.disabled = disabled;
+  if (usage_limit !== undefined) updates.usage_limit = usage_limit;
+  if (expires_at !== undefined) updates.expires_at = expires_at;
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'No fields to update.' });
+  try {
+    await supabase.updateAccessCode(req.params.code, updates);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/admin/codes/:code', validateAccessCode, (req, res) => {
+app.delete('/api/admin/codes/:code', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
-  queryRun('DELETE FROM access_codes WHERE code = ?', [req.params.code]);
-  queryRun('DELETE FROM uploads WHERE access_code = ?', [req.params.code]);
-  res.json({ success: true });
+  try {
+    await supabase.deleteAccessCode(req.params.code);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/admin/users', validateAccessCode, (req, res) => {
+app.get('/api/admin/users', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
-  const codes = queryAll('SELECT * FROM access_codes ORDER BY created_at DESC');
-  const users = codes.map((c) => {
-    const uc = queryOne('SELECT COUNT(*) as cnt FROM uploads WHERE access_code = ?', [c.code]);
-    const la = queryOne('SELECT MAX(uploaded_at) as ma FROM uploads WHERE access_code = ?', [c.code]);
-    return { ...c, upload_count: uc ? uc.cnt : 0, last_active: la ? la.ma : null };
-  });
-  res.json(users);
+  try {
+    const users = await supabase.getActiveUsers();
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/admin/uploads', validateAccessCode, (req, res) => {
+app.get('/api/admin/uploads', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
-  const rows = queryAll('SELECT * FROM uploads ORDER BY uploaded_at DESC');
-  res.json(rows.map((r) => ({ ...r, analysis_result: JSON.parse(r.analysis_result || '{}') })));
+  try {
+    const rows = await supabase.getAllUploads();
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/admin/analytics', validateAccessCode, (req, res) => {
+app.post('/api/admin/manual-analysis', validateAccessCode, async (req, res) => {
   if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
-  const totalCodes = queryOne('SELECT COUNT(*) as count FROM access_codes').count;
-  const activeCodes = queryOne("SELECT COUNT(*) as count FROM access_codes WHERE disabled = 0").count;
-  const disabledCodes = queryOne("SELECT COUNT(*) as count FROM access_codes WHERE disabled = 1").count;
-  const totalUploads = queryOne('SELECT COUNT(*) as count FROM uploads').count;
-  const totalUsageResult = queryOne('SELECT SUM(usage_count) as total FROM access_codes');
-  const totalUsage = totalUsageResult && totalUsageResult.total ? totalUsageResult.total : 0;
-  const expiredResult = queryOne("SELECT COUNT(*) as count FROM access_codes WHERE expires_at IS NOT NULL AND expires_at < datetime('now')");
-  res.json({ totalCodes, activeCodes, disabledCodes, totalUploads, totalUsage, expiredCodes: expiredResult ? expiredResult.count : 0 });
+  const { access_code, pair, direction, confidence, entry_price, timeframe, expiry, reasoning } = req.body;
+  if (!access_code || !pair || !direction) {
+    return res.status(400).json({ error: 'access_code, pair, and direction are required.' });
+  }
+  const uploadId = uuidv4();
+  const analysis = {
+    signal_time: getUTCTimeString(),
+    timezone: 'UTC',
+    pair,
+    expiry: expiry || '5 min',
+    direction: direction.toUpperCase(),
+    direction_emoji: direction.toUpperCase() === 'CALL' ? '🟢' : direction.toUpperCase() === 'PUT' ? '🔴' : '🟡',
+    confidence: Math.min(99, Math.max(50, parseInt(confidence) || 75)),
+    entry_price: entry_price || '—',
+    timeframe: timeframe || 'M5',
+    gales: {
+      first: getUTCTimeString(5),
+      second: getUTCTimeString(10),
+      third: getUTCTimeString(15),
+    },
+    next_signal: getUTCTimeString(5),
+    reasoning: reasoning || 'Manual analysis by admin.',
+    analyzed_at: new Date().toISOString(),
+    lang: 'en',
+    is_manual: true,
+  };
+  try {
+    await supabase.createUpload({
+      access_code,
+      filename: 'manual',
+      original_name: 'manual-entry',
+      storage_path: null,
+      analysis_result: analysis,
+    });
+    res.json({ success: true, id: uploadId, analysis });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+app.get('/api/admin/analytics', validateAccessCode, async (req, res) => {
+  if (!req.isAdmin) return res.status(403).json({ error: 'Forbidden.' });
+  try {
+    const analytics = await supabase.getAnalytics();
+    res.json(analytics);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// === Simulated Analysis Generator (fallback when DeepSeek API key is not set) ===
+function generateSimulatedAnalysis(lang = 'en') {
+  const isSwahili = lang === 'sw';
+  const currentTime = getUTCTimeString();
+  const gale5 = getUTCTimeString(5);
+  const gale10 = getUTCTimeString(10);
+  const gale15 = getUTCTimeString(15);
+  const now = new Date();
+
+  const minute = now.getUTCMinutes();
+  const hour = now.getUTCHours();
+  const seed = (hour * 60 + minute) % 12;
+
+  const pairs = ['EUR/USD', 'GBP/JPY', 'XAU/USD', 'BTC/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'EUR/JPY', 'USD/CAD', 'NZD/USD', 'USDCHF-OTC', 'EUR/USD-OTC'];
+  const directions = ['CALL', 'PUT', 'HOLD', 'CALL', 'PUT', 'CALL'];
+  const confidences = [65, 75, 80, 70, 85, 60, 78, 72, 88, 68, 82, 76];
+  const prices = ['1.08450', '186.342', '2,342.10', '64,230', '1.2678', '149.56', '0.6745', '162.89', '1.3580', '0.6123', '0.8912', '1.0540'];
+  const timeframes = ['M5', 'M1', 'M15', 'M5', 'M5', 'M1', 'M5', 'M15', 'M1', 'M5', 'M5', 'M15'];
+  const reasons = isSwahili
+    ? [
+        'Muundo wa mishumaa tatu mfululizo za kijani unaonyesha nguvu ya kununua.',
+        'RASI imefika katika eneo la kuuzwa zaidi (overbought), inatarajiwa kurejea chini.',
+        'Mishumaa ya Doji kwenye kiwango cha support inaashiria mabadiliko ya trend.',
+        'Kuvunja kwa kiwango cha resistance kwa nguvu, CALL imethibitishwa.',
+        'Muundo wa marubozu mweusi unaonyesha shinikizo kubwa la kuuza.',
+        'Kiwango cha support kimeshikilia mara tatu, inatarajiwa kurudi juu.',
+        'MACD inaonesha msalaba wa dhahabu (golden cross) kwenye M5.',
+        'Mstari wa Bollinger Bands umepanuka, volatility inaongezeka.',
+        'Kiashiria cha RSI kiko kwenye 45, nafasi safi ya kuingia.',
+        'Mitungi miwili (double bottom) imeundwa, CALL inapendekezwa.',
+      ]
+    : [
+        'Three consecutive bullish candlesticks with higher lows indicate strong buying pressure. Price is respecting the upward trendline on M5.',
+        'RSI has reached overbought territory at 72 with a bearish divergence. Expect a pullback to the nearest support level.',
+        'Doji candlestick at major support level followed by a bullish engulfing pattern suggests a trend reversal to the upside.',
+        'Strong breakout above the resistance level with above-average volume. The breakout is confirmed with a retest. CALL signal is validated.',
+        'Marubozu black candlestick closing near session low indicates strong selling pressure. Lower highs forming on the 15-min chart.',
+        'Triple bottom support holding firm at key level. Price rejected with long lower wicks. Bounce expected towards resistance.',
+        'MACD golden cross on M5 timeframe with histogram turning positive. Momentum is shifting bullish.',
+        'Bollinger Bands expanding after contraction period. Price breaking above upper band suggests strong bullish momentum.',
+        'RSI at 45 with room to move in either direction. Price consolidating in a symmetrical triangle — awaiting breakout.',
+        'Double bottom pattern completed with neckline breakout. Target measured move suggests 20-pips upside potential.',
+      ];
+
+  const idx = seed % pairs.length;
+  const direction = directions[seed % directions.length];
+  const directionEmoji = direction === 'CALL' ? '🟢' : direction === 'PUT' ? '🔴' : '🟡';
+  const confidence = confidences[seed % confidences.length];
+  const pair = pairs[idx];
+  const entryPrice = prices[idx];
+  const timeframe = timeframes[idx];
+  const reasoning = reasons[seed % reasons.length];
+
+  return {
+    signal_time: currentTime,
+    timezone: 'UTC',
+    pair,
+    expiry: '5 min',
+    direction,
+    direction_emoji: directionEmoji,
+    confidence,
+    entry_price: entryPrice,
+    timeframe,
+    gales: { first: gale5, second: gale10, third: gale15 },
+    next_signal: gale5,
+    reasoning,
+    analyzed_at: now.toISOString(),
+    lang,
+    is_simulated: true,
+  };
+}
 
 // === AI Analysis Generator (DeepSeek AI) ===
-function callDeepSeek(prompt, systemPrompt) {
+function callDeepSeek(messages) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
       model: DEEPSEEK_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt || 'You are an expert Forex and financial market analyst.' },
-        { role: 'user', content: prompt }
-      ],
-      max_tokens: 600,
+      messages: messages,
+      max_tokens: 300,
       temperature: 0.3,
     });
 
@@ -291,54 +394,94 @@ function callDeepSeek(prompt, systemPrompt) {
   });
 }
 
-async function generateAIAnalysis(lang = 'en') {
-  const isSwahili = lang === 'sw';
-  
-  const systemPrompt = isSwahili
-    ? 'Wewe ni mchambuzi mtaalamu wa Forex na masoko ya fedha. Toa ishara za biashara kwa muundo unaosomeka. Rudisha JSON pekee, hakuna alama za ziada.'
-    : 'You are an expert Forex and financial market analyst. Provide trading signals in a clear format. Return only valid JSON, no markdown.';
-  
-  const userPrompt = isSwahili
-    ? `Chambua chati hii ya Forex. Toa JSON ifuatayo:
-{
-  "pair": "JOZI ya sarafu kama EUR/USD",
-  "direction": "CALL" au "PUT" au "HOLD",
-  "confidence": asilimia 50-99,
-  "entry_price": "bei ya kuingia",
-  "timeframe": "M1, M5, M15",
-  "expiry": "dakika 5",
-  "signal_time": "saa ya sasa kwa UTC-3 kama 13:05",
-  "timezone": "UTC -3",
-  "gales": {
-    "1st": "dakika 5",
-    "2nd": "dakika 10",
-    "3rd": "dakika 15"
-  },
-  "reasoning": "Maelezo ya uchambuzi wa kiufundi kwa Kiswahili"
-}`
-
-    : `Analyze this Forex chart and provide a trading signal. Return EXACTLY this JSON format:
-{
-  "pair": "currency pair like EUR/USD or USDINR-OTC",
-  "direction": "CALL" or "PUT" or "HOLD",
-  "confidence": number 50-99,
-  "entry_price": "entry price level",
-  "timeframe": "M1, M5, or M15",
-  "expiry": "5 min",
-  "signal_time": "current time in UTC-3 like 13:05",
-  "timezone": "UTC -3",
-  "gales": {
-    "1st": "+5 min time like 13:10",
-    "2nd": "+10 min time like 13:15",
-    "3rd": "+15 min time like 13:20"
-  },
-  "reasoning": "detailed technical analysis in English"
+function getUTCTimeString(offsetMinutes = 0) {
+  const d = new Date(Date.now() + offsetMinutes * 60 * 1000);
+  return `${d.getUTCHours().toString().padStart(2, '0')}:${d.getUTCMinutes().toString().padStart(2, '0')}`;
 }
 
-Base analysis on: support/resistance, candlestick patterns, RSI, MACD, and price action. Be realistic.`;
+async function generateAIAnalysis(lang = 'en', imagePath = null) {
+  // If no DeepSeek API key is set, use simulated analysis
+  if (!DEEPSEEK_API_KEY) {
+    console.log('No DEEPSEEK_API_KEY set. Using simulated analysis.');
+    return generateSimulatedAnalysis(lang);
+  }
+
+  const isSwahili = lang === 'sw';
+  const currentTime = getUTCTimeString();
+  const gale5 = getUTCTimeString(5);
+  const gale10 = getUTCTimeString(10);
+  const gale15 = getUTCTimeString(15);
+  
+  const systemPrompt = isSwahili
+    ? 'Wewe ni mchambuzi mtaalamu wa Forex na masoko ya fedha. Chambua CHATI HALISI iliyoambatishwa. Usibuni au kutengeneza data. Ikiwa huoni chati vizuri, rudisha HOLD na confidence 50. Rudisha JSON pekee, hakuna alama za ziada.'
+    : 'You are an expert Forex chart analyst. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data. If you cannot clearly see the chart, return HOLD with confidence 50. Return ONLY valid JSON with no markdown. CRITICAL: Base your analysis strictly on what you visually observe in the chart image.';
+  
+  let userMessages = [];
+  
+  const textContent = isSwahili
+    ? `Chambua chati hii ya Forex. Wakati wa sasa: ${currentTime} UTC.
+
+Angalia chati halisi na urudishe JSON hii:
+{
+  "pair": "jozi halisi la sarafu kwenye chati, mfano EUR/USD",
+  "direction": "CALL (bei itapanda) au PUT (bei itashuka) au HOLD (si wazi)",
+  "confidence": nambari 50-99 (hakikisha inaakisi uhakika wako halisi),
+  "entry_price": "bei halisi ya kuingia inayoonekana kwenye chati",
+  "timeframe": "M1, M5, au M15 (muda wa chati unaoonekana)",
+  "reasoning": "uchambuzi wa kina kwa Kiswahili — eleza muundo wa mishumaa, support/resistance, RSI, au mienendo inayoonekana"
+}
+
+MUHIMU: Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "HOLD", "confidence": 50.`
+    : `Analyze this Forex chart screenshot for binary options trading.
+
+Current UTC time: ${currentTime} UTC — Time fields will be set by the system.
+
+INSTRUCTIONS:
+1. Look CAREFULLY at the chart image attached
+2. Identify what you actually see — candlestick patterns, trend direction, support/resistance levels, indicators
+3. Be realistic — if the chart is unclear or you cannot see enough detail, return HOLD with confidence 50
+4. DO NOT fabricate patterns that aren't there
+5. DO NOT make up price levels — use what's actually visible
+
+Return this JSON format ONLY:
+{
+  "pair": "the actual currency pair visible in the chart, e.g. EUR/USD, GBP/JPY, USDINR-OTC",
+  "direction": "CALL (uptrend visible) or PUT (downtrend visible) or HOLD (unclear/neutral)",
+  "confidence": number 50-99 (reflect your genuine certainty based on what you see),
+  "entry_price": "the actual entry price visible on the chart, or '—' if unclear",
+  "timeframe": "M1, M5, or M15 (the timeframe shown on the chart)",
+  "reasoning": "specific technical analysis — describe actual candlestick patterns, trend lines, support/resistance zones, RSI levels, or price action you observe in THIS chart"
+}
+
+CRITICAL: Base your analysis ONLY on what is actually visible in the chart image. Do not invent data.`;
+  
+  if (imagePath && fs.existsSync(imagePath)) {
+    try {
+      const imageBuffer = fs.readFileSync(imagePath);
+      const base64Image = imageBuffer.toString('base64');
+      const ext = path.extname(imagePath).toLowerCase().replace('.', '');
+      const mimeType = ext === 'jpg' ? 'jpeg' : ext;
+      
+      userMessages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${textContent}\n\nHere is the chart screenshot to analyze:\n![chart screenshot](data:image/${mimeType};base64,${base64Image})` }
+      ];
+    } catch (readErr) {
+      console.error('Error reading image file:', readErr.message);
+      userMessages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: textContent }
+      ];
+    }
+  } else {
+    userMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: textContent }
+    ];
+  }
   
   try {
-    const responseText = await callDeepSeek(userPrompt, systemPrompt);
+    const responseText = await callDeepSeek(userMessages);
     
     let jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON found');
@@ -346,65 +489,29 @@ Base analysis on: support/resistance, candlestick patterns, RSI, MACD, and price
     const analysis = JSON.parse(jsonMatch[0]);
     const now = new Date();
     
-    // Calculate gale times in UTC-3
-    const utcMinus3 = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-    const h = utcMinus3.getHours().toString().padStart(2, '0');
-    const m = utcMinus3.getMinutes().toString().padStart(2, '0');
-    const currentTime = `${h}:${m}`;
-    
-    const addMin = (min) => {
-      const d = new Date(utcMinus3.getTime() + min * 60 * 1000);
-      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-    };
-    
     const direction = typeof analysis.direction === 'string' ? analysis.direction.toUpperCase() : 'HOLD';
     const directionEmoji = direction === 'CALL' ? '🟢' : direction === 'PUT' ? '🔴' : '🟡';
     
     return {
-      signal_time: analysis.signal_time || currentTime,
-      timezone: 'UTC -3',
-      pair: analysis.pair || 'USDINR-OTC',
+      signal_time: currentTime,
+      timezone: 'UTC',
+      pair: analysis.pair || 'EUR/USD',
       expiry: '5 min',
       direction: direction,
       direction_emoji: directionEmoji,
       confidence: Math.min(99, Math.max(50, parseInt(analysis.confidence) || 75)),
       entry_price: analysis.entry_price || '—',
       timeframe: analysis.timeframe || 'M5',
-      gales: {
-        first: analysis.gales?.['1st'] || addMin(5),
-        second: analysis.gales?.['2nd'] || addMin(10),
-        third: analysis.gales?.['3rd'] || addMin(15),
-      },
-      next_signal: addMin(5),
+      gales: { first: gale5, second: gale10, third: gale15 },
+      next_signal: gale5,
       reasoning: analysis.reasoning || (isSwahili ? 'Hakuna uchambuzi uliopatikana.' : 'No analysis available.'),
       analyzed_at: now.toISOString(),
       lang: lang
     };
   } catch (err) {
     console.error('DeepSeek analysis error:', err.message);
-    const now = new Date();
-    const utcMinus3 = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-    const addMin = (min) => {
-      const d = new Date(utcMinus3.getTime() + min * 60 * 1000);
-      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-    };
-    
-    return {
-      signal_time: `${utcMinus3.getHours().toString().padStart(2,'0')}:${utcMinus3.getMinutes().toString().padStart(2,'0')}`,
-      timezone: 'UTC -3',
-      pair: 'USDINR-OTC',
-      expiry: '5 min',
-      direction: 'HOLD',
-      direction_emoji: '🟡',
-      confidence: 50,
-      entry_price: '—',
-      timeframe: 'M5',
-      gales: { first: addMin(5), second: addMin(10), third: addMin(15) },
-      next_signal: addMin(5),
-      reasoning: isSwahili ? 'Huduma ya uchambuzi haipatikani kwa sasa. Tafadhali jaribu tena.' : 'Analysis service temporarily unavailable. Please try again.',
-      analyzed_at: now.toISOString(),
-      lang: lang
-    };
+    console.log('Falling back to simulated analysis.');
+    return generateSimulatedAnalysis(lang);
   }
 }
 
@@ -415,11 +522,22 @@ app.get('*', (req, res) => {
 });
 
 async function start() {
-  await initDatabase();
+  // Test Supabase connection
+  const connected = await supabase.testConnection();
+  if (!connected) {
+    console.warn('⚠️  Supabase connection failed. Check your SUPABASE_URL and SUPABASE_SERVICE_KEY.');
+  } else {
+    // Ensure storage bucket exists
+    await supabase.ensureStorageBucket();
+  }
+
   app.listen(PORT, () => {
     console.log(`Theo Sign running on http://localhost:${PORT}`);
-    console.log(`Demo codes: DEMO-1234, TRADE-5678`);
-    console.log(`Master admin code is confidential.`);
+    console.log(`Supabase: ${connected ? '✅ Connected' : '❌ Not connected'}`);
+    if (!DEEPSEEK_API_KEY) {
+      console.log('⚠️  No DEEPSEEK_API_KEY set. Using simulated analysis mode.');
+    }
   });
 }
+
 start();

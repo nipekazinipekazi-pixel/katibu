@@ -1,9 +1,4 @@
 [build]
   publish = "public"
-  # No build command needed for this static site; Netlify will serve files from `public`.
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-  force = true
+  # No build command needed — Netlify serves the static files from `public/`.
+  # SPA routing is handled by `public/_redirects`.
