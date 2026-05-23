@@ -9,7 +9,7 @@
     "vercel-build": "echo 'Build complete'"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
