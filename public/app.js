@@ -165,7 +165,7 @@ function startCountdown(elementId, utcTime) {
   function tick() {
     const ms = msUntilUtcTime(utcTime);
     if (ms <= 1000) {
-      el.textContent = 'EXPIRED ⏰';
+      el.textContent = 'EXPIRED';
       el.style.color = '#ef4444';
       if (countdownIntervals[elementId]) {
         clearInterval(countdownIntervals[elementId]);
@@ -362,6 +362,7 @@ function renderHeroPage(container) {
 
     <!-- HERO SECTION -->
     <section class="hero-section" id="hero-section">
+      <canvas id="candleCanvas"></canvas>
       <div class="hero-bg-chart"></div>
       <div class="hero-overlay"></div>
       <div class="hero-content">
@@ -374,6 +375,11 @@ function renderHeroPage(container) {
         </div>
       </div>
     </section>
+
+    <!-- LIVE SIGNAL TICKER -->
+    <div class="signal-ticker-wrapper">
+      <div class="signal-ticker-track" id="signalTickerTrack"></div>
+    </div>
 
     <!-- LIVE SIGNAL FEED -->
     <section class="signals-section" id="signals-section">
@@ -400,7 +406,7 @@ function renderHeroPage(container) {
         </div>
         <div class="signal-card-hero">
           <div class="signal-card-top">
-            <span class="signal-icon">🥇</span>
+            <span class="signal-icon">₿</span>
             <span class="signal-label">COMMODITY</span>
             <span class="signal-result success">+1.37%</span>
           </div>
@@ -410,7 +416,7 @@ function renderHeroPage(container) {
         </div>
         <div class="signal-card-hero">
           <div class="signal-card-top">
-            <span class="signal-icon">💶</span>
+            <span class="signal-icon">₿</span>
             <span class="signal-label">FOREX</span>
             <span class="signal-result success">+0.69%</span>
           </div>
@@ -419,23 +425,25 @@ function renderHeroPage(container) {
           <div class="signal-target">TARGET <strong>1.09200</strong></div>
         </div>
       </div>
+      <!-- 50 Live Feeds Grid -->
+      <div class="live-feed-grid" id="liveFeedGrid"></div>
     </section>
 
     <!-- FEATURES SECTION -->
     <section class="features-section" id="features-section">
       <div class="features-grid">
         <div class="feature-card">
-          <div class="feature-icon">🛡️</div>
+          <div class="feature-icon"><span class="fi-text">90</span></div>
           <h3>90% Accuracy</h3>
           <p>Our AI models analyze thousands of data points to deliver highly accurate trading signals you can trust.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">⚡</div>
+          <div class="feature-icon"><span class="fi-text">R</span></div>
           <h3>Real-time Alerts</h3>
           <p>Get instant notifications on market movements and trading opportunities as they happen.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📊</div>
+          <div class="feature-icon"><span class="fi-text">A</span></div>
           <h3>Expert Analysis</h3>
           <p>Deep technical analysis combining candlestick patterns, RSI, MACD, and support/resistance levels.</p>
         </div>
@@ -448,12 +456,12 @@ function renderHeroPage(container) {
       <div class="pricing-card">
         <div class="pricing-label">Monthly Access</div>
         <div class="pricing-price">10,000 TSh<span class="pricing-period">/month</span></div>
-        <div class="pricing-sub">Less than a cup of coffee! ☕</div>
+        <div class="pricing-sub">Less than a cup of coffee!</div>
         <ul class="pricing-features">
-          <li>✓ All VIP Signals</li>
-          <li>✓ Telegram Bot Access</li>
-          <li>✓ 24/7 Support</li>
-          <li>✓ AI-Powered Analysis</li>
+          <li>All VIP Signals</li>
+          <li>Telegram Bot Access</li>
+          <li>24/7 Support</li>
+          <li>AI-Powered Analysis</li>
         </ul>
         <button class="pricing-btn" onclick="navigateTo('landing')">Subscribe Now</button>
       </div>
@@ -495,6 +503,202 @@ function renderHeroPage(container) {
       STATE.mobileMenuOpen = false;
     });
   });
+
+  // === GENERATE LIVE SIGNAL TICKER (walking across screen) ===
+  (function initSignalTicker() {
+    const FX_PAIRS = [
+      'EUR/USD','GBP/JPY','USD/JPY','GBP/USD','USD/CHF',
+      'AUD/USD','USD/CAD','NZD/USD','EUR/JPY','GBP/CHF',
+      'EUR/GBP','EUR/CHF','EUR/AUD','GBP/AUD','AUD/JPY',
+      'CHF/JPY','NZD/JPY','EUR/CAD','GBP/CAD','AUD/CAD',
+      'USDINR-OTC','EURUSD-OTC','GBPUSD-OTC','USDJPY-OTC','AUDUSD-OTC',
+      'GBPJPY-OTC','EURJPY-OTC','USDCAD-OTC','EURGBP-OTC','GBPAUD-OTC',
+      'BTC/USD','ETH/USD','XRP/USD','LTC/USD','BCH/USD',
+      'ADA/USD','DOT/USD','LINK/USD','XLM/USD','SOL/USD',
+      'XAU/USD','XAG/USD','WTI/USD','BRENT/USD','NG/USD',
+      'GBP/NZD','EUR/NZD','AUD/NZD','NZD/CAD','NZD/CHF'
+    ];
+    const dirs = ['CALL','PUT','HOLD'];
+    const statuses = ['GOOD TO GO','GOOD TO GO','HOLD'];
+
+    function rnd() {
+      const i = Math.floor(Math.random()*3);
+      return { dir: dirs[i], status: statuses[i], conf: Math.floor(Math.random()*30)+60 };
+    }
+    function buildItem(p) {
+      const r = rnd();
+      const cls = r.dir==='CALL'?'call':r.dir==='PUT'?'put':'hold';
+      const sCls = r.status==='GOOD TO GO'?'good':'hold';
+      return `<div class="ticker-item walking">
+        <span class="ticker-pair">${p}</span>
+        <span class="ticker-direction ${cls}">${r.dir}</span>
+        <span class="ticker-conf">${r.conf}%</span>
+        <span class="ticker-status ${sCls}">${r.status}</span>
+      </div>`;
+    }
+    const track = document.getElementById('signalTickerTrack');
+    if (track) {
+      track.innerHTML = FX_PAIRS.map(buildItem).join('') + FX_PAIRS.map(buildItem).join('');
+    }
+
+    // Refresh ticker items every 10 seconds for dynamism
+    setInterval(() => {
+      const t = document.getElementById('signalTickerTrack');
+      if (t) {
+        t.innerHTML = FX_PAIRS.map(buildItem).join('') + FX_PAIRS.map(buildItem).join('');
+      }
+    }, 10000);
+  })();
+
+  // === GENERATE 50 LIVE FEED ITEMS ===
+  (function initLiveFeed() {
+    const FX_PAIRS = [
+      'EUR/USD','GBP/JPY','USD/JPY','GBP/USD','USD/CHF',
+      'AUD/USD','USD/CAD','NZD/USD','EUR/JPY','GBP/CHF',
+      'EUR/GBP','EUR/CHF','EUR/AUD','GBP/AUD','AUD/JPY',
+      'CHF/JPY','NZD/JPY','EUR/CAD','GBP/CAD','AUD/CAD',
+      'USDINR-OTC','EURUSD-OTC','GBPUSD-OTC','USDJPY-OTC','AUDUSD-OTC',
+      'GBPJPY-OTC','EURJPY-OTC','USDCAD-OTC','EURGBP-OTC','GBPAUD-OTC',
+      'BTC/USD','ETH/USD','XRP/USD','LTC/USD','BCH/USD',
+      'ADA/USD','DOT/USD','LINK/USD','XLM/USD','SOL/USD',
+      'XAU/USD','XAG/USD','WTI/USD','BRENT/USD','NG/USD',
+      'GBP/NZD','EUR/NZD','AUD/NZD','NZD/CAD','NZD/CHF'
+    ];
+    const dirs = ['CALL','PUT','HOLD'];
+    const statuses = ['GOOD TO GO','GOOD TO GO','HOLD'];
+
+    function rnd() {
+      const i = Math.floor(Math.random()*3);
+      return { dir: dirs[i], status: statuses[i], conf: Math.floor(Math.random()*30)+60 };
+    }
+
+    const grid = document.getElementById('liveFeedGrid');
+    if (grid) {
+      let html = '';
+      for (let i = 0; i < 50; i++) {
+        const p = FX_PAIRS[i % FX_PAIRS.length];
+        const r = rnd();
+        const cls = r.dir==='CALL'?'call':r.dir==='PUT'?'put':'hold';
+        html += `<div class="live-feed-item">
+          <div class="lf-pair">${p}</div>
+          <div class="lf-dir ${cls}">${r.dir}</div>
+          <div class="lf-conf">${r.conf}% confidence</div>
+          <div class="lf-status">${r.status}</div>
+        </div>`;
+      }
+      grid.innerHTML = html;
+    }
+
+    // Refresh feeds every 8 seconds
+    setInterval(() => {
+      const g = document.getElementById('liveFeedGrid');
+      if (!g) return;
+      let html = '';
+      for (let i = 0; i < 50; i++) {
+        const p = FX_PAIRS[i % FX_PAIRS.length];
+        const r = rnd();
+        const cls = r.dir==='CALL'?'call':r.dir==='PUT'?'put':'hold';
+        html += `<div class="live-feed-item">
+          <div class="lf-pair">${p}</div>
+          <div class="lf-dir ${cls}">${r.dir}</div>
+          <div class="lf-conf">${r.conf}% confidence</div>
+          <div class="lf-status">${r.status}</div>
+        </div>`;
+      }
+      g.innerHTML = html;
+    }, 8000);
+  })();
+
+  // === ANIMATED FOREX CANDLES CANVAS BACKGROUND ===
+  (function initCandleCanvas() {
+    const canvas = document.getElementById('candleCanvas');
+    if (!canvas) return;
+    const section = document.getElementById('hero-section');
+    if (!section) return;
+
+    function resize() {
+      const rect = section.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const ctx = canvas.getContext('2d');
+    const candles = [];
+    const count = 80;
+    let basePrice = 1.0850;
+    for (let i = 0; i < count; i++) {
+      const open = basePrice + (Math.random() - 0.5) * 0.002;
+      const close = open + (Math.random() - 0.4) * 0.004;
+      const high = Math.max(open, close) + Math.random() * 0.001;
+      const low = Math.min(open, close) - Math.random() * 0.001;
+      candles.push({ open, close, high, low });
+      basePrice = close;
+    }
+
+    let scrollOffset = 0;
+
+    function drawCandles() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const candleWidth = w / count * 0.7;
+      const spacing = w / count;
+
+      scrollOffset += 0.3;
+      if (scrollOffset >= spacing * count) scrollOffset = 0;
+
+      // Refresh some candles periodically
+      if (Math.floor(scrollOffset) % 20 === 0) {
+        for (let i = 0; i < 3; i++) {
+          const idx = Math.floor(Math.random() * count);
+          const open = candles[idx].close;
+          const close = open + (Math.random() - 0.4) * 0.004;
+          const high = Math.max(open, close) + Math.random() * 0.001;
+          const low = Math.min(open, close) - Math.random() * 0.001;
+          candles[idx] = { open, close, high, low };
+        }
+      }
+
+      const midY = h / 2;
+      const scale = h * 0.4;
+
+      for (let i = 0; i < count; i++) {
+        const c = candles[i];
+        const x = ((i * spacing) - scrollOffset) % (spacing * count);
+        if (x < -candleWidth || x > w) continue;
+
+        const isGreen = c.close >= c.open;
+        const color = isGreen ? 'rgba(74, 222, 128, 0.2)' : 'rgba(239, 68, 68, 0.2)';
+        const wickColor = isGreen ? 'rgba(74, 222, 128, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+
+        const yOpen = midY + (basePrice - c.open) * scale * 5000;
+        const yClose = midY + (basePrice - c.close) * scale * 5000;
+        const yHigh = midY + (basePrice - c.high) * scale * 5000;
+        const yLow = midY + (basePrice - c.low) * scale * 5000;
+
+        const top = Math.min(yOpen, yClose);
+        const bottom = Math.max(yOpen, yClose);
+        const bodyHeight = Math.max(bottom - top, 2);
+
+        ctx.strokeStyle = wickColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x + candleWidth / 2, yHigh);
+        ctx.lineTo(x + candleWidth / 2, yLow);
+        ctx.stroke();
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x, top, candleWidth, bodyHeight);
+      }
+
+      requestAnimationFrame(drawCandles);
+    }
+
+    drawCandles();
+  })();
 }
 
 // ============================================================
@@ -581,7 +785,7 @@ function renderDashboard(container) {
         </div>
         <div class="dash-header-right">
           <div class="live-clock-box">
-            <span class="live-clock-icon">🕐</span>
+            <span class="live-clock-icon">TS</span>
             <span class="live-clock-time" id="liveClock">00:00:00</span>
           </div>
           <button class="btn-icon" id="refreshBtn" title="Refresh">↻</button>
@@ -594,9 +798,10 @@ function renderDashboard(container) {
           <h2>${t('chartAnalysis')}</h2>
           <p>${t('uploadDesc')}</p>
           <div class="upload-area" id="uploadArea">
-            <div class="upload-area-icon">📈</div>
+            <div class="upload-area-icon"><span class="fi-text">U</span></div>
             <div class="upload-area-text">${t('dropHere')} <strong>${t('browse')}</strong></div>
             <div class="upload-area-hint">${t('supports')}</div>
+            <div class="paste-hint">Or press Ctrl+V to paste a screenshot</div>
             <input type="file" id="fileInput" accept="image/png,image/jpeg,image/jpg,image/gif,image/bmp,image/webp" />
             <img class="upload-preview" id="uploadPreview" />
           </div>
@@ -663,10 +868,37 @@ function renderDashboard(container) {
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
+          // Visual feedback
+          const uploadArea = document.getElementById('uploadArea');
+          if (uploadArea) {
+            uploadArea.classList.add('paste-active');
+            const hint = uploadArea.querySelector('.paste-hint');
+            if (hint) hint.classList.add('show');
+            setTimeout(() => {
+              uploadArea.classList.remove('paste-active');
+              if (hint) hint.classList.remove('show');
+            }, 2000);
+          }
           handleFileSelect(file);
           showToast('Image pasted from clipboard!', 'info');
         }
         break;
+      }
+    }
+  });
+
+  // Also listen for keydown to show hint when Ctrl is pressed
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      const isDashboard = document.querySelector('.dashboard') !== null;
+      if (!isDashboard) return;
+      const uploadArea = document.getElementById('uploadArea');
+      if (uploadArea) {
+        const hint = uploadArea.querySelector('.paste-hint');
+        if (hint) hint.classList.add('show');
+        setTimeout(() => {
+          if (hint) hint.classList.remove('show');
+        }, 2000);
       }
     }
   });
@@ -749,15 +981,17 @@ function renderHistory() {
     const a = upload.analysis_result || {};
     const pair = a.pair || 'EUR/USD';
     const direction = a.direction || 'HOLD';
-    const directionEmoji = a.direction_emoji || '🟡';
     const signalTime = a.signal_time || '--:--';
     const conf = a.confidence || 0;
     const gales = a.gales || {};
-    const flags = getPairFlags(pair);
     const dirLabel = direction === 'CALL' ? 'UP' : direction === 'PUT' ? 'DOWN' : 'HOLD';
     const entryPrice = a.entry_price || '—';
     const reasoning = a.reasoning || '';
     const isManual = a.is_manual ? ' (Manual)' : '';
+
+    // Status
+    const hStatus = conf >= 70 ? 'GOOD TO GO' : 'HOLD';
+    const hStatusClass = conf >= 70 ? 'good' : 'hold';
 
     let confClass = 'medium';
     if (conf >= 80) confClass = 'high';
@@ -767,7 +1001,7 @@ function renderHistory() {
       <div class="history-item" data-upload-id="${upload.id}">
         <div class="history-item-header">
           <div class="history-direction ${direction.toLowerCase()}">
-            ${directionEmoji} ${pair} · ${dirLabel} · ${conf}%
+            ${pair} ${dirLabel} ${conf}%
           </div>
           <div class="history-meta">
             <span>${timeAgo(upload.uploaded_at)}${isManual}</span>
@@ -775,10 +1009,15 @@ function renderHistory() {
         </div>
         <div class="history-expanded" id="historyDetail_${upload.id}">
           <div class="signal-card-new signal-card-compact">
-            <div class="signal-line-time">⏰ ${utcToLocal(signalTime)}</div>
-            <div class="signal-line-expiry">💰${a.expiry || '5 min'} Exp</div>
+            <div class="signal-line-time">${utcToLocal(signalTime)}</div>
+            <div class="signal-line-expiry">${a.expiry || '5 min'} Exp</div>
             <div class="signal-line-main">
-              ${pair} → ${dirLabel} ${directionEmoji}
+              ${pair} ${dirLabel}
+            </div>
+            <div class="signal-status-bar">
+              <span class="ticker-status ${hStatusClass}">${hStatus}</span>
+              <span class="sd-value ${confClass}">${conf}%</span>
+            </div>
             </div>
             <div class="signal-line-pair">
               ${pair}${flags}
@@ -886,28 +1125,35 @@ function renderAnalysisResult(a) {
   const pair = a.pair || 'EUR/USD';
   const signalTime = utcToLocal(a.signal_time);
   const direction = a.direction || 'HOLD';
-  const directionEmoji = a.direction_emoji || '🟡';
   const entryPrice = a.entry_price || '—';
   const expiry = a.expiry || '5 min';
   const timeframe = a.timeframe || 'M5';
   const confidence = a.confidence || 75;
   const gales = a.gales || { first: '--:--', second: '--:--', third: '--:--' };
   const reasoning = a.reasoning || 'No analysis available.';
-  const flags = getPairFlags(pair);
+
+  // Compute Status based on confidence (GOOD TO GO >= 70%, HOLD < 70%)
+  const status = confidence >= 70 ? 'GOOD TO GO' : 'HOLD';
+  const statusClass = confidence >= 70 ? 'good' : 'hold';
 
   const dirLabel = direction === 'CALL' ? 'UP' : direction === 'PUT' ? 'DOWN' : 'HOLD';
 
   el.innerHTML = `
     <div class="signal-card-new">
-      <div class="signal-line-time">⏰ ${signalTime}</div>
-      <div class="signal-line-expiry">💰${expiry} Exp</div>
+      <div class="signal-line-time">${signalTime}</div>
+      <div class="signal-line-expiry">${expiry} Exp</div>
       <div class="signal-line-main">
-        ${pair} → ${dirLabel} ${directionEmoji}
+        ${pair} → ${dirLabel}
       </div>
       <div class="signal-line-pair">
-        ${pair}${flags}
+        ${pair}
       </div>
       
+      <div class="signal-status-bar">
+        <span class="ticker-status ${statusClass}">${status}</span>
+        <span class="sd-value ${confidence >= 80 ? 'high' : confidence >= 60 ? 'medium' : 'low'}">${confidence}%</span>
+      </div>
+
       <div class="signal-gales">
         <div class="gale-row">
           <span class="gale-label">1st GALE</span>
@@ -1284,6 +1530,7 @@ function renderAdminManualAnalysis(container) {
             <label>Access Code</label>
             <select id="manualAccessCode">
               <option value="">— Select a user —</option>
+              <option value="ALL">ALL USERS (Broadcast to everyone)</option>
               ${STATE.adminUsers.map(u => `<option value="${u.code}">${u.code} ${u.disabled ? '(disabled)' : ''}</option>`).join('')}
               ${STATE.adminCodes.filter(c => !STATE.adminUsers.find(u => u.code === c.code)).map(c => `<option value="${c.code}">${c.code}</option>`).join('')}
             </select>
@@ -1297,9 +1544,9 @@ function renderAdminManualAnalysis(container) {
           <div class="manual-form-group">
             <label>Direction</label>
             <select id="manualDirection">
-              <option value="CALL">CALL (Price will go UP) 🟢</option>
-              <option value="PUT">PUT (Price will go DOWN) 🔴</option>
-              <option value="HOLD">HOLD (Wait) 🟡</option>
+              <option value="CALL">CALL (Price will go UP)</option>
+              <option value="PUT">PUT (Price will go DOWN)</option>
+              <option value="HOLD">HOLD (Wait)</option>
             </select>
           </div>
           <div class="manual-form-group">
@@ -1367,9 +1614,9 @@ function renderAdminManualAnalysis(container) {
       
       resultEl.innerHTML = `
         <div class="signal-card-new" style="margin-top:12px">
-          <div style="color:var(--green);font-weight:600;margin-bottom:8px">✅ Analysis submitted successfully!</div>
-          <div class="signal-line-time">⏰ ${utcToLocal(data.analysis.signal_time)}</div>
-          <div class="signal-line-main">${data.analysis.pair} → ${data.analysis.direction} ${data.analysis.direction_emoji}</div>
+          <div style="color:var(--green);font-weight:600;margin-bottom:8px">Analysis submitted successfully!</div>
+          <div class="signal-line-time">${utcToLocal(data.analysis.signal_time)}</div>
+          <div class="signal-line-main">${data.analysis.pair} ${data.analysis.direction}</div>
           <div class="signal-details">
             <div class="signal-detail-item">
               <span class="sd-label">Confidence</span>

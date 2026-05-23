@@ -1,4 +1,5 @@
 /* === RESET & BASE === */
+/* @skill ui-ux-pro-max: animated forex candles background, live ticker, paste support */
 *, *::before, *::after {
   margin: 0;
   padding: 0;
@@ -206,6 +207,18 @@ body {
     radial-gradient(ellipse at 80% 20%, rgba(59, 130, 246, 0.04) 0%, transparent 50%),
     radial-gradient(ellipse at 50% 80%, rgba(139, 92, 246, 0.03) 0%, transparent 50%);
   pointer-events: none;
+}
+
+/* Animated Forex Candle Canvas */
+#candleCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .hero-overlay {
@@ -1846,6 +1859,303 @@ body {
 .history-direction.call { color: var(--green); }
 .history-direction.put { color: var(--red); }
 .history-direction.hold { color: var(--yellow); }
+
+/* ============================================================
+   LIVE SIGNAL TICKER (50 Walking Signals)
+   ============================================================ */
+.signal-ticker-wrapper {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  margin-bottom: 24px;
+}
+
+.signal-ticker-track {
+  display: flex;
+  gap: 24px;
+  animation: ticker-scroll 60s linear infinite;
+  width: max-content;
+}
+
+.signal-ticker-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.ticker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.ticker-item:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(74, 222, 128, 0.15);
+}
+
+.ticker-pair {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  font-family: monospace;
+}
+
+.ticker-direction {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.ticker-direction.call {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.ticker-direction.put {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.ticker-direction.hold {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
+
+.ticker-conf {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ticker-status {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.ticker-status.good {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.ticker-status.hold {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+}
+
+/* Signal walking/moving animation on each item */
+.ticker-item.walking {
+  animation: walk-bounce 2s ease-in-out infinite;
+}
+
+@keyframes walk-bounce {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-3px); }
+  50% { transform: translateY(0); }
+  75% { transform: translateY(-2px); }
+}
+
+.ticker-item.walking:nth-child(odd) {
+  animation-delay: 0.5s;
+}
+
+.ticker-item.walking:nth-child(3n) {
+  animation-delay: 1s;
+}
+
+.ticker-item.walking:nth-child(5n+2) {
+  animation-delay: 0.2s;
+}
+
+/* ============================================================
+   PASTE ZONE STYLES
+   ============================================================ */
+.upload-area.paste-active {
+  border-color: var(--blue);
+  background: var(--blue-bg);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+}
+
+.upload-area.paste-active .upload-area-icon {
+  content: '📋';
+}
+
+.paste-hint {
+  display: none;
+  color: var(--blue);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 4px;
+  letter-spacing: 0.3px;
+}
+
+.paste-hint.show {
+  display: block;
+}
+
+/* ============================================================
+   50 LIVE FEED GRID
+   ============================================================ */
+.live-feed-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.live-feed-item {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: all 0.3s ease;
+  animation: feed-fade-in 0.5s ease forwards;
+  opacity: 0;
+}
+
+.live-feed-item:nth-child(1) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(2) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(3) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(4) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(5) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(6) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(7) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(8) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(9) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(10) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(11) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(12) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(13) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(14) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(15) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(16) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(17) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(18) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(19) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(20) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(21) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(22) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(23) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(24) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(25) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(26) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(27) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(28) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(29) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(30) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(31) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(32) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(33) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(34) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(35) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(36) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(37) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(38) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(39) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(40) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(41) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(42) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(43) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(44) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(45) { animation-delay: 0.2s; }
+.live-feed-item:nth-child(46) { animation-delay: 0.0s; }
+.live-feed-item:nth-child(47) { animation-delay: 0.05s; }
+.live-feed-item:nth-child(48) { animation-delay: 0.1s; }
+.live-feed-item:nth-child(49) { animation-delay: 0.15s; }
+.live-feed-item:nth-child(50) { animation-delay: 0.2s; }
+
+@keyframes feed-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.live-feed-item .lf-pair {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: monospace;
+}
+
+.live-feed-item .lf-dir {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  display: inline-block;
+  width: fit-content;
+}
+
+.live-feed-item .lf-dir.call { background: var(--green-bg); color: var(--green); }
+.live-feed-item .lf-dir.put { background: var(--red-bg); color: var(--red); }
+.live-feed-item .lf-dir.hold { background: var(--yellow-bg); color: var(--yellow); }
+
+.live-feed-item .lf-conf {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+}
+
+.live-feed-item .lf-status {
+  font-size: 0.55rem;
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Feature icon text fallback (emoji replacement) */
+.fi-text {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--accent);
+  font-family: monospace;
+  line-height: 1;
+}
+
+/* Signal status bar in analysis result */
+.signal-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.signal-status-bar .ticker-status {
+  font-size: 0.7rem;
+  padding: 4px 12px;
+}
+
+.signal-status-bar .sd-value {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-left: auto;
+}
 
 /* === RESPONSIVE === */
 @media (max-width: 1024px) {

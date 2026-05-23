@@ -238,14 +238,17 @@ app.post('/api/admin/manual-analysis', validateAccessCode, async (req, res) => {
     return res.status(400).json({ error: 'access_code, pair, and direction are required.' });
   }
   const uploadId = uuidv4();
+  const dir = direction.toUpperCase();
+  const conf = Math.min(99, Math.max(0, parseInt(confidence) || 75));
+  const status = dir === 'HOLD' ? 'HOLD' : 'GOOD TO GO';
   const analysis = {
     signal_time: getUTCTimeString(),
     timezone: 'UTC',
     pair,
     expiry: expiry || '5 min',
-    direction: direction.toUpperCase(),
-    direction_emoji: direction.toUpperCase() === 'CALL' ? '🟢' : direction.toUpperCase() === 'PUT' ? '🔴' : '🟡',
-    confidence: Math.min(99, Math.max(50, parseInt(confidence) || 75)),
+    direction: dir,
+    confidence: conf,
+    status,
     entry_price: entry_price || '—',
     timeframe: timeframe || 'M5',
     gales: {
@@ -259,6 +262,33 @@ app.post('/api/admin/manual-analysis', validateAccessCode, async (req, res) => {
     lang: 'en',
     is_manual: true,
   };
+
+  // Broadcast to all users if access_code is "ALL"
+  if (access_code === 'ALL') {
+    try {
+      const allCodes = await supabase.getAllAccessCodes();
+      const results = [];
+      for (const ac of allCodes) {
+        if (ac.disabled) continue;
+        try {
+          await supabase.createUpload({
+            access_code: ac.code,
+            filename: 'manual',
+            original_name: 'manual-entry',
+            storage_path: null,
+            analysis_result: analysis,
+          });
+          results.push(ac.code);
+        } catch (innerErr) {
+          console.error(`Failed to create upload for ${ac.code}:`, innerErr.message);
+        }
+      }
+      return res.json({ success: true, broadcast: true, uploaded_to: results, count: results.length, analysis });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   try {
     await supabase.createUpload({
       access_code,
@@ -329,12 +359,14 @@ function generateSimulatedAnalysis(lang = 'en') {
 
   const idx = seed % pairs.length;
   const direction = directions[seed % directions.length];
-  const directionEmoji = direction === 'CALL' ? '🟢' : direction === 'PUT' ? '🔴' : '🟡';
   const confidence = confidences[seed % confidences.length];
   const pair = pairs[idx];
   const entryPrice = prices[idx];
   const timeframe = timeframes[idx];
   const reasoning = reasons[seed % reasons.length];
+
+  // Status reflects direction, no forced HOLD
+  const status = direction === 'HOLD' ? 'HOLD' : 'GOOD TO GO';
 
   return {
     signal_time: currentTime,
@@ -342,8 +374,8 @@ function generateSimulatedAnalysis(lang = 'en') {
     pair,
     expiry: '5 min',
     direction,
-    direction_emoji: directionEmoji,
     confidence,
+    status,
     entry_price: entryPrice,
     timeframe,
     gales: { first: gale5, second: gale10, third: gale15 },
@@ -413,47 +445,62 @@ async function generateAIAnalysis(lang = 'en', imagePath = null) {
   const gale15 = getUTCTimeString(15);
   
   const systemPrompt = isSwahili
-    ? 'Wewe ni mchambuzi mtaalamu wa Forex na masoko ya fedha. Chambua CHATI HALISI iliyoambatishwa. Usibuni au kutengeneza data. Ikiwa huoni chati vizuri, rudisha HOLD na confidence 50. Rudisha JSON pekee, hakuna alama za ziada.'
-    : 'You are an expert Forex chart analyst. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data. If you cannot clearly see the chart, return HOLD with confidence 50. Return ONLY valid JSON with no markdown. CRITICAL: Base your analysis strictly on what you visually observe in the chart image.';
-  
-  let userMessages = [];
-  
-  const textContent = isSwahili
-    ? `Chambua chati hii ya Forex. Wakati wa sasa: ${currentTime} UTC.
+    ? 'Wewe ni mchambuzi mtaalamu wa Forex na Crypto binary options. Chambua CHATI HALISI iliyoambatishwa. Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "HOLD", "confidence": 50.'
+    : 'You are an expert AI Trading Analyst specializing in Forex and Crypto binary options. Your task is to analyze uploaded chart images and provide a specific trading signal. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data.';
 
-Angalia chati halisi na urudishe JSON hii:
+  let userMessages = [];
+
+  const textContent = isSwahili
+    ? `Chambua chati hii kwa binary options.
+
+Wakati wa sasa: ${currentTime} UTC.
+
+MUHIMU - SOMA MUDDA KWENYE CHATI:
+1. Angalia kama kuna muda au tarehe kwenye picha ya chati (kwa kona au chini).
+2. KAMA MUDA UNAONEKANA: Tumia muda huo kuchambua. Chati inaweza kuwa ya saa kadhaa zilizopita — chambua kulingana na wakati ulio KWENYE chati.
+3. KAMA HAKUNA MUDA: Tumia muda wa sasa wa UTC uliopewa hapo juu.
+
+SHERIA ZA KUAMUA:
+1. CHAMBUA chati kwa trend direction, support/resistance, na momentum.
+2. KOKOTOA asilimia ya uhakika (confidence) 0-100%.
+3. DIRECTION: Chagua "CALL" (bei itapanda) au "PUT" (bei itashuka) kulingana na uchambuzi wako. HAKUNA kikomo cha chini cha confidence — hata kama uhakika wako ni mdogo, bado chagua CALL au PUT.
+4. Usichague "HOLD" isipokuwa kama huwezi kabisa kuamua mwelekeo kutoka kwenye chati.
+
+Rudisha JSON hii pekee:
 {
-  "pair": "jozi halisi la sarafu kwenye chati, mfano EUR/USD",
-  "direction": "CALL (bei itapanda) au PUT (bei itashuka) au HOLD (si wazi)",
-  "confidence": nambari 50-99 (hakikisha inaakisi uhakika wako halisi),
-  "entry_price": "bei halisi ya kuingia inayoonekana kwenye chati",
-  "timeframe": "M1, M5, au M15 (muda wa chati unaoonekana)",
-  "reasoning": "uchambuzi wa kina kwa Kiswahili — eleza muundo wa mishumaa, support/resistance, RSI, au mienendo inayoonekana"
+  "pair": "jozi halisi la sarafu, mfano EUR/USD",
+  "direction": "CALL au PUT (kamwe usichague HOLD kwa default)",
+  "confidence": nambari 0-100,
+  "entry_price": "bei halisi kwenye chati, au '—'",
+  "timeframe": "M1, M5, au M15",
+  "reasoning": "uchambuzi mfupi — eleza kama kuna muda kwenye chati na uchambue kulingana na kipindi hicho"
 }
 
-MUHIMU: Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "HOLD", "confidence": 50.`
-    : `Analyze this Forex chart screenshot for binary options trading.
+MUHIMU: Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "CALL", "confidence": 50.`
+    : `You are an expert AI Trading Analyst specializing in Forex and Crypto binary options.
 
-Current UTC time: ${currentTime} UTC — Time fields will be set by the system.
+Current UTC time: ${currentTime} UTC.
 
-INSTRUCTIONS:
-1. Look CAREFULLY at the chart image attached
-2. Identify what you actually see — candlestick patterns, trend direction, support/resistance levels, indicators
-3. Be realistic — if the chart is unclear or you cannot see enough detail, return HOLD with confidence 50
-4. DO NOT fabricate patterns that aren't there
-5. DO NOT make up price levels — use what's actually visible
+IMPORTANT - READ THE TIME FROM THE CHART:
+1. First, look at the chart screenshot for any visible timestamp, date, or time indicator.
+2. If a timestamp IS visible on the chart (e.g., in the corner or axis), use THAT time as your reference for analysis. The chart may be from hours ago — analyze what was happening at the time SHOWN on the chart.
+3. If NO timestamp is visible on the chart, use the current UTC time provided above as your reference.
+
+ANALYSIS RULES:
+1. ANALYSIS: Analyze the chart for trend direction, support/resistance, and momentum.
+2. CONFIDENCE: Assign a confidence percentage (0-100%) to your prediction.
+3. DIRECTION: Based on your chart analysis, choose "CALL" (price will go UP) or "PUT" (price will go DOWN). You are FREE to choose CALL or PUT based on what the chart shows — there is no minimum confidence threshold. Even at low confidence, still choose CALL or PUT based on your best analysis.
+4. Do NOT output "HOLD" unless you genuinely cannot determine a direction from the chart.
 
 Return this JSON format ONLY:
 {
-  "pair": "the actual currency pair visible in the chart, e.g. EUR/USD, GBP/JPY, USDINR-OTC",
-  "direction": "CALL (uptrend visible) or PUT (downtrend visible) or HOLD (unclear/neutral)",
-  "confidence": number 50-99 (reflect your genuine certainty based on what you see),
-  "entry_price": "the actual entry price visible on the chart, or '—' if unclear",
-  "timeframe": "M1, M5, or M15 (the timeframe shown on the chart)",
-  "reasoning": "specific technical analysis — describe actual candlestick patterns, trend lines, support/resistance zones, RSI levels, or price action you observe in THIS chart"
-}
-
-CRITICAL: Base your analysis ONLY on what is actually visible in the chart image. Do not invent data.`;
+  "pair": "the actual currency pair visible, e.g. EUR/USD, GBP/JPY, BTC/USD",
+  "direction": "CALL" or "PUT" (based on chart analysis — never default to HOLD),
+  "confidence": number 0-100,
+  "entry_price": "the actual entry price visible, or '—' if unclear",
+  "timeframe": "M1, M5, or M15 (the timeframe shown)",
+  "reasoning": "Brief explanation — note if the chart shows a timestamp from an earlier time, and analyze based on that period"
+}`;
   
   if (imagePath && fs.existsSync(imagePath)) {
     try {
@@ -489,24 +536,27 @@ CRITICAL: Base your analysis ONLY on what is actually visible in the chart image
     const analysis = JSON.parse(jsonMatch[0]);
     const now = new Date();
     
-    const direction = typeof analysis.direction === 'string' ? analysis.direction.toUpperCase() : 'HOLD';
-    const directionEmoji = direction === 'CALL' ? '🟢' : direction === 'PUT' ? '🔴' : '🟡';
+    let direction = typeof analysis.direction === 'string' ? analysis.direction.toUpperCase() : 'CALL';
+    const confidence = Math.min(99, Math.max(0, parseInt(analysis.confidence) || 50));
+    
+    // Status reflects the actual direction, no forced HOLD
+    const status = direction === 'HOLD' ? 'HOLD' : 'GOOD TO GO';
     
     return {
       signal_time: currentTime,
       timezone: 'UTC',
       pair: analysis.pair || 'EUR/USD',
       expiry: '5 min',
-      direction: direction,
-      direction_emoji: directionEmoji,
-      confidence: Math.min(99, Math.max(50, parseInt(analysis.confidence) || 75)),
+      direction,
+      confidence,
+      status,
       entry_price: analysis.entry_price || '—',
       timeframe: analysis.timeframe || 'M5',
       gales: { first: gale5, second: gale10, third: gale15 },
       next_signal: gale5,
       reasoning: analysis.reasoning || (isSwahili ? 'Hakuna uchambuzi uliopatikana.' : 'No analysis available.'),
       analyzed_at: now.toISOString(),
-      lang: lang
+      lang
     };
   } catch (err) {
     console.error('DeepSeek analysis error:', err.message);
