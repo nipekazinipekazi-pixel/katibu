@@ -445,8 +445,8 @@ async function generateAIAnalysis(lang = 'en', imagePath = null) {
   const gale15 = getUTCTimeString(15);
   
   const systemPrompt = isSwahili
-    ? 'Wewe ni mchambuzi mtaalamu wa Forex na Crypto binary options. Chambua CHATI HALISI iliyoambatishwa. Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "HOLD", "confidence": 50.'
-    : 'You are an expert AI Trading Analyst specializing in Forex and Crypto binary options. Your task is to analyze uploaded chart images and provide a specific trading signal. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data.';
+    ? 'Jina lako ni Gooner. Wewe ni mchambuzi mtaalamu wa Forex na Crypto binary options. Chambua CHATI HALISI iliyoambatishwa. Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "HOLD", "confidence": 50.'
+    : 'You are Gooner, an expert AI Trading Analyst specializing in Forex and Crypto binary options. Your task is to analyze uploaded chart images and provide a specific trading signal. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data.';
 
   let userMessages = [];
 
