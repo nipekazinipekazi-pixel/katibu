@@ -445,8 +445,8 @@ async function generateAIAnalysis(lang = 'en', imagePath = null) {
   const gale15 = getUTCTimeString(15);
   
   const systemPrompt = isSwahili
-    ? 'Jina lako ni Gooner. Wewe ni mchambuzi mtaalamu wa Forex na Crypto binary options. Chambua CHATI HALISI iliyoambatishwa. Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "HOLD", "confidence": 50.'
-    : 'You are Gooner, an expert AI Trading Analyst specializing in Forex and Crypto binary options. Your task is to analyze uploaded chart images and provide a specific trading signal. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data.';
+    ? 'Jina lako ni Gooner. Wewe ni mchambuzi mtaalamu wa Forex na Crypto binary options. Chambua CHATI HALISI iliyoambatishwa. Usibuni data. KAMWE usitoe HOLD - sio KAMWE! Rudisha CALL au PUT tu. Ikiwa huoni chati vizuri, rudisha CALL na confidence ndogo.'
+    : 'You are Gooner, an expert AI Trading Analyst specializing in Forex and Crypto binary options. Your task is to analyze uploaded chart images and provide a specific trading signal. You MUST analyze the ACTUAL chart image attached. Do NOT fabricate or invent data. NEVER output HOLD - EVER! Always output CALL or PUT only. If you cannot understand the chart, output CALL with low confidence.';
 
   let userMessages = [];
 
@@ -463,20 +463,20 @@ MUHIMU - SOMA MUDDA KWENYE CHATI:
 SHERIA ZA KUAMUA:
 1. CHAMBUA chati kwa trend direction, support/resistance, na momentum.
 2. KOKOTOA asilimia ya uhakika (confidence) 0-100%.
-3. DIRECTION: Chagua "CALL" (bei itapanda) au "PUT" (bei itashuka) kulingana na uchambuzi wako. HAKUNA kikomo cha chini cha confidence — hata kama uhakika wako ni mdogo, bado chagua CALL au PUT.
-4. Usichague "HOLD" isipokuwa kama huwezi kabisa kuamua mwelekeo kutoka kwenye chati.
+3. DIRECTION: Chagua "CALL" (bei itapanda) au "PUT" (bei itashuka) KILA WAKATI. KAMWE usichague HOLD!
+4. HATA KAMA confidence ni ndogo, rudisha CALL au PUT - si HOLD!
 
 Rudisha JSON hii pekee:
 {
   "pair": "jozi halisi la sarafu, mfano EUR/USD",
-  "direction": "CALL au PUT (kamwe usichague HOLD kwa default)",
+  "direction": "CALL au PUT (KAMWE SI HOLD!)",
   "confidence": nambari 0-100,
   "entry_price": "bei halisi kwenye chati, au '—'",
   "timeframe": "M1, M5, au M15",
-  "reasoning": "uchambuzi mfupi — eleza kama kuna muda kwenye chati na uchambue kulingana na kipindi hicho"
+  "reasoning": "uchambuzi mfupi"
 }
 
-MUHIMU: Usibuni data. Ikiwa huoni chati vizuri, rudisha "direction": "CALL", "confidence": 50.`
+MUHIMU: Usibuni data. LAKINI rudisha CALL au PUT KILA WAKATI - KAMWE SI HOLD. Ikiwa huoni chati vizuri, rudisha "direction": "CALL", "confidence": 35.`
     : `You are an expert AI Trading Analyst specializing in Forex and Crypto binary options.
 
 Current UTC time: ${currentTime} UTC.
@@ -489,17 +489,18 @@ IMPORTANT - READ THE TIME FROM THE CHART:
 ANALYSIS RULES:
 1. ANALYSIS: Analyze the chart for trend direction, support/resistance, and momentum.
 2. CONFIDENCE: Assign a confidence percentage (0-100%) to your prediction.
-3. DIRECTION: Based on your chart analysis, choose "CALL" (price will go UP) or "PUT" (price will go DOWN). You are FREE to choose CALL or PUT based on what the chart shows — there is no minimum confidence threshold. Even at low confidence, still choose CALL or PUT based on your best analysis.
-4. Do NOT output "HOLD" unless you genuinely cannot determine a direction from the chart.
+3. DIRECTION: Output "CALL" (price will go UP) or "PUT" (price will go DOWN) ALWAYS. NEVER output HOLD.
+4. EVEN IF you cannot fully understand the chart, you MUST choose CALL or PUT - not HOLD.
+5. Low confidence is OK - just output CALL or PUT anyway.
 
 Return this JSON format ONLY:
 {
   "pair": "the actual currency pair visible, e.g. EUR/USD, GBP/JPY, BTC/USD",
-  "direction": "CALL" or "PUT" (based on chart analysis — never default to HOLD),
+  "direction": "CALL" or "PUT" (NEVER HOLD!),
   "confidence": number 0-100,
   "entry_price": "the actual entry price visible, or '—' if unclear",
   "timeframe": "M1, M5, or M15 (the timeframe shown)",
-  "reasoning": "Brief explanation — note if the chart shows a timestamp from an earlier time, and analyze based on that period"
+  "reasoning": "Brief explanation"
 }`;
   
   if (imagePath && fs.existsSync(imagePath)) {
@@ -537,10 +538,14 @@ Return this JSON format ONLY:
     const now = new Date();
     
     let direction = typeof analysis.direction === 'string' ? analysis.direction.toUpperCase() : 'CALL';
+    // Force CALL or PUT - never allow HOLD
+    if (direction === 'HOLD' || direction === '') {
+      direction = Math.random() > 0.5 ? 'CALL' : 'PUT';
+    }
     const confidence = Math.min(99, Math.max(0, parseInt(analysis.confidence) || 50));
     
-    // Status reflects the actual direction, no forced HOLD
-    const status = direction === 'HOLD' ? 'HOLD' : 'GOOD TO GO';
+    // Status always reflects the direction
+    const status = 'GOOD TO GO';
     
     return {
       signal_time: currentTime,
